@@ -1,0 +1,227 @@
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+# Load datasets
+df = pd.read_csv('features.csv')
+df_train = pd.read_csv('train.csv')
+df_store = pd.read_csv('stores.csv')
+
+# Filter data for Store 36
+df = df.loc[df['Store'] == 36, :]
+
+# Convert 'Date' columns to datetime
+df['Date'] = pd.to_datetime(df['Date'])
+df_train['Date'] = pd.to_datetime(df_train['Date'])
+
+# Merge df_train with df based on 'Store' and 'Date' columns,
+# then merge the result with df_store based on 'Store' column
+df = df_train.merge(df, on=['Store', 'Date'], how='inner').merge(df_store, on=['Store'], how='inner')
+
+# Calculate derived attributes
+df['Week'] = df['Date'].dt.isocalendar().week.astype('int64')
+df['Month'] = df['Date'].dt.month.astype('int64')
+df['Year'] = df['Date'].dt.year.astype('int64')
+df['Days'] = (df['Date'] - df['Date'].min()).dt.days
+
+# Replace zeros in the 'Days' column with a small non-zero value
+df['Days'] = df['Days'].replace(0, 1e-6)  # Replace zeros with a small value (e.g., 1e-6)
+
+# Convert 'Fuel_Price' column to numeric
+df['Fuel_Price'] = pd.to_numeric(df['Fuel_Price'], errors='coerce')  # Convert to numeric, handle errors gracefully
+
+# Calculate the gradient
+df['Grad'] = np.gradient(df['Fuel_Price'], df['Days'])
+
+# Forward fill missing values in 'Grad' column
+df['Grad'] = df['Grad'].fillna(method='ffill')
+
+# Plot CPI Time Series
+plt.figure(figsize=(12, 5))
+sns.lineplot(data=df, x='Date', y='CPI', hue='Year', palette=['#858483', '#56a85d', '#5695a8'])
+plt.title('Consumer Price Index Time Series', fontsize=17, color='#212428')
+plt.show()
+
+# Plot Fuel Price Time Series
+plt.figure(figsize=(12, 5))
+sns.lineplot(data=df, x='Date', y='Fuel_Price', hue='Year', palette=['#87888c', '#7786d1', '#3551de'])
+plt.title('Fuel Price Time Series', fontsize=17, color='#212428')
+plt.show()
+
+# Plot Monthly Temperature
+plt.figure(figsize=(12, 5))
+sns.lineplot(data=df, x='Month', y='Temperature', hue='Year', palette=['#ad6a4b', '#4bad6f', '#4b6cad'])
+plt.title('Monthly Temperature', fontsize=17, color='#212428')
+plt.show()
+
+# Linear regression between Days and CPI
+x, y = 'Days', 'CPI'
+model = LinearRegression()
+model.fit(df[[x]], df[y])
+pred_df = pd.DataFrame({x: np.arange(df[x].min(), df[x].max() + 365)})  # DataFrame for forecasts
+pred_df[y] = model.predict(pred_df[[x]])
+r2 = r2_score(df[y], model.predict(df[[x]]))
+plt.figure(figsize=(12, 5))
+sns.scatterplot(data=df, x=x, y=y, color='#522D14', label='Observed Data')
+plt.plot(pred_df[x], pred_df[y], color='#C69655', linewidth=5, label=f'Regression Line\n{round(r2, 2)}')
+plt.title('Linear Regression with 1-Year Forecasts')
+plt.xlabel('Days')
+plt.ylabel('Consumer Price Index')
+plt.legend()
+plt.show()
+
+# Linear regression between Fuel_Price and CPI
+x, y = 'Fuel_Price', 'CPI'
+model = LinearRegression()
+model.fit(df[[x]], df[y])
+pred = model.predict(df[[x]])
+r2 = r2_score(df[y], pred)
+plt.figure(figsize=(10, 5))
+sns.scatterplot(data=df, x=x, y=y, color=['#4a5eb0'])
+plt.plot(df[x], pred, color='#404248', linewidth=5, label=f'Regression Line\nDetermination Coefficient: {round(r2, 2)}')
+plt.title(f'Linear Regression between {x} and {y}')
+plt.legend()
+plt.show()
+
+# Average Weekly Sales over Time
+temp = df[['Date', 'Weekly_Sales']].groupby('Date').mean().reset_index()
+plt.figure(figsize=(12, 5))
+plt.plot(temp['Date'], temp['Weekly_Sales'], marker='o', linewidth=.5, color='seagreen')
+plt.xlabel('Date')
+plt.ylabel('Average Weekly Sales')
+plt.show()
+
+# Linear regression with 1-year forecasts for Weekly Sales
+rr = temp.copy()
+rr['Days'] = (rr['Date'] - rr['Date'].min()).dt.days
+x, y = 'Days', 'Weekly_Sales'
+model = LinearRegression()
+model.fit(rr[[x]], rr[y])
+pred_rr = pd.DataFrame({x: np.arange(rr[x].min(), rr[x].max() + 365)})
+pred_rr[y] = model.predict(pred_rr[[x]])
+r2 = r2_score(rr[y], model.predict(rr[[x]]))
+plt.figure(figsize=(12, 5))
+sns.scatterplot(data=rr, x=x, y=y, color='#522D14', label='Observed Data')
+plt.plot(pred_rr[x], pred_rr[y], color='#C69655', linewidth=5, label=f'Regression Line\n{round(r2, 2)}')
+plt.title('Forecast until Sept. 2013')
+plt.xlabel('Days')
+plt.ylabel('Average Sales Quantity')
+plt.legend()
+plt.show()
+
+# Pivot table for Weekly Sales by Year and Month
+plt.figure(figsize=(12, 6))
+pd.pivot_table(df, values='Weekly_Sales', columns='Year', index='Month').plot(marker='o', linewidth=.5)
+plt.title('Weekly Sales by Year and Month')
+plt.xlabel('Month')
+plt.ylabel('Weekly Sales')
+plt.legend(title='Year')
+plt.show()
+
+# Pairplot
+t = sns.pairplot(df[['Weekly_Sales', 'Temperature', 'Fuel_Price', 'CPI', 'Unemployment', 'Week', 'Month', 'Year', 'Days', 'Grad', 'Size']])
+t.map_upper(sns.scatterplot, color='#FDA101')
+t.map_lower(sns.scatterplot, color="#FDA101")
+t.map_diag(sns.histplot, color="#B65050")
+plt.show()
+
+# Fuel Price per Store
+plt.figure(figsize=(10, 4))
+for i in df['Store'].unique():
+    stor = df.loc[df['Store'] == i, :]
+    plt.plot(stor['Month'], stor['Fuel_Price'], linewidth=2)
+plt.xlabel('Month')
+plt.ylabel('Fuel Price')
+plt.title('Fuel Price per Store')
+plt.show()
+
+# Scatter plot between CPI and Unemployment by Year
+plt.figure(figsize=(10, 6))
+sns.scatterplot(data=df, x='CPI', y='Unemployment', hue='Year', palette=['#ab4444', '#44ab54', '#4465ab'])
+plt.title('CPI vs Unemployment by Year')
+plt.show()
+
+# Correlation Matrix
+corr = df.select_dtypes(include=['float64', 'int64']).corr().round(2)
+plt.figure(figsize=(15, 10))
+sns.heatmap(corr, mask=np.triu(np.ones_like(corr, dtype=bool)), cmap="coolwarm", annot=True)
+plt.title('Correlation Matrix')
+plt.show()
+
+# CPI Time Series from 2021
+ts = df.loc[df['Date'] >= '2011-01-01', :]
+plt.figure(figsize=(10, 4))
+sns.lineplot(data=ts, x='Date', y='CPI', hue='Year', palette=['#ab4444', '#4465ab'])
+plt.title('CPI Time Series from 2021')
+plt.show()
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.metrics import r2_score
+
+# Load datasets
+df = pd.read_csv('features.csv')
+df_train = pd.read_csv('train.csv')
+df_store = pd.read_csv('stores.csv')
+
+# Filter data for Store 36
+df = df.loc[df['Store'] == 36]
+
+# Convert 'Date' columns to datetime
+df['Date'] = pd.to_datetime(df['Date'])
+df_train['Date'] = pd.to_datetime(df_train['Date'])
+
+# Merge df_train with df based on 'Store' and 'Date' columns,
+# then merge the result with df_store based on 'Store' column
+df = df_train.merge(df, on=['Store', 'Date'], how='inner').merge(df_store, on='Store', how='inner')
+
+# Calculate derived attributes
+df['Week'] = df['Date'].dt.isocalendar().week.astype('int64')
+df['Month'] = df['Date'].dt.month.astype('int64')
+df['Year'] = df['Date'].dt.year.astype('int64')
+df['Days'] = (df['Date'] - df['Date'].min()).dt.days
+
+# Replace zeros in the 'Days' column with a small non-zero value
+df['Days'] = df['Days'].replace(0, 1e-6)
+
+# Convert 'Fuel_Price' column to numeric
+df['Fuel_Price'] = pd.to_numeric(df['Fuel_Price'], errors='coerce')
+
+# Calculate the gradient
+df['Grad'] = np.gradient(df['Fuel_Price'], df['Days'])
+
+# Forward fill missing values in 'Grad' column
+df['Grad'] = df['Grad'].ffill()
+
+# Define features and target variable
+X = df[['Fuel_Price', 'CPI', 'Unemployment', 'Size']]  # Features
+y = df['Weekly_Sales']  # Target variable
+
+# Split the dataset into training and testing sets
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Initialize and train the decision tree regressor
+tree_reg = DecisionTreeRegressor(random_state=42)
+tree_reg.fit(X_train, y_train)
+
+# Predictions
+y_pred_train = tree_reg.predict(X_train)
+y_pred_test = tree_reg.predict(X_test)
+
+# Evaluate the model
+r2_train = r2_score(y_train, y_pred_train)
+r2_test = r2_score(y_test, y_pred_test)
+print("Training R^2:", r2_train)
+print("Testing R^2:", r2_test)
+# Forward fill missing values in 'Grad' column
+df['Grad'] = df['Grad'].ffill()
+
